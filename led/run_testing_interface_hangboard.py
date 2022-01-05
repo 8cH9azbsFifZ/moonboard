@@ -14,7 +14,7 @@ import math # floor
 
 # external power LED and power button
 LED_GPIO = 26
-BUTTON_GPIO = 3
+BUTTON_GPIO = 3 # FIXME: Config file
 
 
 import logging
@@ -33,6 +33,38 @@ class Database():
         self._time_last = self._time_current 
         self._update_interval = 1.0 #0.5 # Update interval for display in seconds
 
+
+    def _display_10er(self, lc10, col="E"):
+        ymax = 10
+        ymin = 1
+        ichar = col #chr(ord('@')+i1)
+        ytmp = ymax - lc10
+        color_10er_done = (255,0,0)
+        color_10er_not_done = (0,0,50)
+        for y in range(ymin,ymax):
+            ihold = ichar+str(y)
+
+            if y < ytmp:
+                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[ihold], color_10er_not_done)
+            else:
+                logging.debug("Use hold "+ihold)
+                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[ihold], color_10er_done)
+
+    def _display_1er(self, lc1, col="F"):
+        ymax = 10
+        ymin = 1
+        ichar = col#chr(ord('@')+i1)
+        ytmp = ymax - lc1
+        color_1er_done = (0,255,0)
+        color_1er_not_done = (0,0,50)
+        for y in range(ymin,ymax):
+            ihold = ichar+str(y)
+
+            if y < ytmp:
+                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[ihold], color_1er_not_done)
+            else:
+                logging.debug("Use hold "+ihold)
+                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[ihold], color_1er_done)
 
     def _on_message(self, client, userdata, message):
         logging.debug("Received message " + str(message.payload.decode("utf-8")))
@@ -54,6 +86,8 @@ class Database():
         #t = "Time: " + str(msg["time"])
         #lmax = "\rLoad Max: %.1f    " % msg["loadmaximal"]
         ll = msg["loadcurrent"]
+        
+        # Total
         lc = 0
         lc1 = 0
         lc10 = 0
@@ -61,10 +95,24 @@ class Database():
             lc = int(ll) 
             lc1 = int(repr(lc)[-1]) 
             lc10 = math.floor(lc/10)
-        #lc10 = int(repr(lc)[-2]) 
-        #lc100 = int(repr(lc)[-3]) 
         logging.debug("Using: lc10:"+str(lc10))
         logging.debug("Using: lc1:"+str(lc1))
+
+        # Channel 1
+        ll1 = msg["loadcurrent_balance"]
+        l1lc = 0
+        l1lc1 = 0
+        l1lc10 = 0
+        if ll1 > 0:
+            l1lc = int(ll1) 
+            l1lc1 = int(repr(l1lc)[-1]) 
+            l1lc10 = math.floor(l1lc/10)
+
+        # Channel 2
+        l2lc = lc - l1lc
+        l2lc1 = lc1 - l1lc1
+        l2lc10 = lc10 - l1lc10
+
 
         logging.debug ("Clean board")
         
@@ -73,39 +121,18 @@ class Database():
         logging.debug ("Begin display holds")
         #charmax = chr(ord('@')+lc1)
 
-        ## 10er
-        ymax = 10
-        ymin = 1
-        ichar = "E"#chr(ord('@')+i1)
-        ytmp = ymax - lc10
-        color_10er_done = (255,0,0)
-        color_10er_not_done = (0,0,50)
-        for y in range(ymin,ymax):
-            ihold = ichar+str(y)
+        ## Total load
+        self._display_10er(lc10)
+        self._display_10er(lc1)
 
-            if y < ytmp:
-                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[ihold], color_10er_not_done)
-            else:
-                logging.debug("Use hold "+ihold)
-                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[ihold], color_10er_done)
+        ## Channel 1
+        self._display_10er(l1lc10,col="A")
+        self._display_10er(l1lc1,col="B")
 
-        ## 1er
-        ichar = "F"#chr(ord('@')+i1)
-        ytmp = ymax - lc1
-        color_1er_done = (0,255,0)
-        color_1er_not_done = (0,0,50)
-        for y in range(ymin,ymax):
-            ihold = ichar+str(y)
+        ## Channel 2
+        self._display_10er(l2lc10,col="J")
+        self._display_10er(l2lc1,col="K")
 
-            if y < ytmp:
-                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[ihold], color_1er_not_done)
-            else:
-                logging.debug("Use hold "+ihold)
-                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[ihold], color_1er_done)
-
-
-
-            # FIXME: Runs too long - next event occurs....
         self._MOONBOARD.layout.push_to_driver()
 
         #self._MOONBOARD.show_hold("A4")
