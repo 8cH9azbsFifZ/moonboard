@@ -123,15 +123,15 @@ class Database():
 
         ## Total load
         self._display_10er(lc10)
-        self._display_10er(lc1)
+        self._display_1er(lc1)
 
         ## Channel 1
         self._display_10er(l1lc10,col="A")
-        self._display_10er(l1lc1,col="B")
+        self._display_1er(l1lc1,col="B")
 
         ## Channel 2
         self._display_10er(l2lc10,col="J")
-        self._display_10er(l2lc1,col="K")
+        self._display_1er(l2lc1,col="K")
 
         self._MOONBOARD.layout.push_to_driver()
 
