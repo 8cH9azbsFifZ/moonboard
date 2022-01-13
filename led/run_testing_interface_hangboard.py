@@ -27,7 +27,9 @@ logging.basicConfig(level=logging.DEBUG,
 class Database():
     def __init__(self, driver_type="", led_layout=""):
         self._MOONBOARD = MoonBoard(driver_type, led_layout)
-
+        logging.debug ("Clean board") 
+        self._MOONBOARD.clear()
+        
         # Init timers
         self._time_current = time.time()
         self._time_last = self._time_current 
@@ -35,7 +37,7 @@ class Database():
 
 
     def _display_10er(self, lc10, col="E"):
-        ymax = 10
+        ymax = 10+1
         ymin = 1
         ichar = col #chr(ord('@')+i1)
         ytmp = ymax - lc10
@@ -51,7 +53,7 @@ class Database():
                 self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[ihold], color_10er_done)
 
     def _display_1er(self, lc1, col="F"):
-        ymax = 10
+        ymax = 10+1
         ymin = 1
         ichar = col#chr(ord('@')+i1)
         ytmp = ymax - lc1
@@ -117,10 +119,7 @@ class Database():
             l2lc1 = lc1 - l1lc1
             l2lc10 = lc10 - l1lc10
 
-        logging.debug ("Clean board")
-        
-        self._MOONBOARD.clear()
-        
+
         logging.debug ("Begin display holds")
         #charmax = chr(ord('@')+lc1)
 
