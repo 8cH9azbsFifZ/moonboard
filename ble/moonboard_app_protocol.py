@@ -17,7 +17,7 @@ def decode_problem_string(s):
         t,p = h[0],position_trans(int(h[1:]))
         if t=='S':
             holds['START'].append(p)
-        if t=='P':
+        if t=='P' || t == 'R' || t == 'L' || t == 'M' || t =='F':
             holds['MOVES'].append(p)
         if t=='E':
             holds['TOP'].append(p)
