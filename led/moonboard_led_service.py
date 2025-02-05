@@ -40,7 +40,7 @@ class Database():
         GREEN = (0,255,0)
         BLUE = (0,0,255)
         RED = (255,0,0)
-        VIOLET = (143,0,255)
+        VIOLET = (180,0,255)
         CYAN = (0,255,255)
         PINK = (255,96,136)
 
