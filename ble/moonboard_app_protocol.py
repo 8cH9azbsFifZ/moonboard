@@ -25,8 +25,8 @@ def decode_problem_string(s, flags):
             p = position_trans(int(h[1:]), num_rows)
         except Exception as X:
             #error in decoding show red led in A1
-            t = 'E'
-            p = 1
+            t = "E"
+            p = "A1"
         
         if t=='S':
             holds['START'].append(p)
