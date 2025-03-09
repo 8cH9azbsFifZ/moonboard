@@ -6,6 +6,8 @@
 #./20-prepare-python.sh # FIXME
 #./30-install-services.sh # FIXME
 
+echo "Applying patch to bluez for iPhone"
+sudo sed -i '/ExecStart/ c ExecStart=/usr/lib/bluetooth/bluetoothd -P battery' /usr/lib/systemd/system/bluetooth.service
 
 
 #echo "Install application"
