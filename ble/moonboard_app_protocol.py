@@ -12,18 +12,39 @@ def position_trans(p,num_rows):
     return X_GRID_NAMES[col]+str(row)
     
 def decode_problem_string(s, flags):
-    holds = {'START':[],'MOVES':[],'TOP':[], 'FLAGS':[flags]}
+    holds = {
+        'START':[],
+        'MOVES':[],
+        'LEFT':[],
+        'FOOT':[],
+        'MATCH':[],
+        'TOP':[], 
+        'FLAGS':flags}
 
-    if flags.find("M") != -1:
+    if "M" in  flags:
         num_rows = 12
     else:
         num_rows = 18
+    
+    if "B" in  flags:
+        colors = True
+    else:
+        colors = False
 
     for h in s.split(','):
         t,p = h[0],position_trans(int(h[1:]), num_rows)
         if t=='S':
             holds['START'].append(p)
-        if t=='P' or t == 'R' or t == 'L' or t == 'M' or t =='F':
+        if colors: 
+            if t=='L':
+                holds['LEFT'].append(p)
+            if t=='F':
+                holds['FOOT'].append(p)
+            if t=='M':
+                holds['MATCH'].append(p)
+            if t=='R':
+                holds['MOVES'].append(p)
+        elif t=='P' or t == 'R' or t == 'L' or t == 'M' or t =='F':
             holds['MOVES'].append(p)
         if t=='E':
             holds['TOP'].append(p)
@@ -43,7 +64,7 @@ class UnstuffSequence():
         else:
             self.logger=logger
         self.s=''
-        self.flags=''
+        self.flags=[]
 
     def process_bytes(self, ba):
         """ 
@@ -54,14 +75,26 @@ class UnstuffSequence():
         s = bytearray.fromhex(ba).decode(errors="ignore")
         self.logger.debug("incoming bytes:"+str(s))
         
-        if s[0] == '~' and s[-1] == '*':
-            # Flag processing
-            self.flags=s[1:-1]
-            if s.find("M") != -1:
-                self.logger.debug('MINI')
-            if s.find("D") != -1:
-                self.logger.debug('BothLights')
-        elif s[:2]==self.START:
+        if s[0] == '~':
+            """
+            if the string begins with ~  means that there are flags
+            the legend is: 
+            M = mini board
+            D = duble led above and below holds
+            B = colors and use start left right foot end match
+            """
+            s = s[1:]
+            self.flags.append(s[0])
+            s = s[1:]
+            if s[0] == '*':
+                s = s[1:]
+            else:
+                s = s[1:]
+                self.flags.append(s[0])
+                s = s[1:]
+                s = s[1:]
+
+        if s[:2]==self.START:
             self.logger.debug('START')
             if self.s =='':
                 if s[-1]==self.STOP:

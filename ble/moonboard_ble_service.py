@@ -114,7 +114,7 @@ class MoonboardBLE():
             problem= decode_problem_string(new_problem_string, flags)
             print(json.dumps(problem)) # FIXME
             self._sendmessage("/problem", json.dumps(problem)) # FIXME
-            unstuffer.flags = ''
+            unstuffer.flags = []
             self.start_adv(logger)
 
     def monitor_btmon(self, logger, unstuffer): 

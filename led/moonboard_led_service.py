@@ -37,16 +37,27 @@ class Database():
         #mm = message.payload.decode("utf-8")
         msg = json.loads(message.payload.decode("utf-8"))
 
-        color_start = (0,255,0)
-        color_moves = (0,0,255)
-        color_top = (255,0,0)
+        GREEN = (0,255,0)
+        BLUE = (0,0,255)
+        RED = (255,0,0)
+        VIOLET = (143,0,255)
+        CYAN = (0,255,255)
+        PINK = (255,96,136)
+
         self._MOONBOARD.clear()
         for s in msg["START"]:
-            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[s], color_start)
+            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[s], GREEN)
         for m in msg["MOVES"]:
-            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[m], color_moves)        
+            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[m], BLUE)        
+        for t in msg["LEFT"]:
+            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], VIOLET)
+        for t in msg["FOOT"]:
+            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], CYAN)
+        for t in msg["MATCH"]:
+            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], PINK)
         for t in msg["TOP"]:
-            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], color_top)
+            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], RED)
+        
         #self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[ihold], color_1er_done)
         self._MOONBOARD.layout.push_to_driver()
 
