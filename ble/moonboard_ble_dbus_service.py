@@ -10,6 +10,8 @@ import logging
 from moonboard_app_protocol import UnstuffSequence, decode_problem_string
 
 import os
+import errno
+import time
 import threading
 import pty
  
@@ -82,24 +84,82 @@ class MoonApplication(dbus.service.Object):
         dbus.service.Object.__init__(self, bus, self.path)
         self.add_service(UartService(bus,self.get_path(), 0, self.process_rx)) 
 
-        monitor_thread = threading.Thread(target=self.monitor_btmon)  
+        monitor_thread = threading.Thread(target=self.monitor_btmon, daemon=True)
         monitor_thread.start()
 
-    def monitor_btmon(self): 
-        out_r, out_w = pty.openpty()
-        cmd = ["sudo","btmon"]
-        process = subprocess.Popen(cmd, stdout=out_w)
-        f = OutStream(out_r)
+    def _restart_advertising(self):
+        """Re-setup and start BLE advertising after a disconnect."""
+        self.logger.info('Client disconnected, restarting advertising...')
+        try:
+            setup_adv(self.logger)
+            start_adv(self.logger)
+            self.logger.info('Advertising restarted successfully')
+        except Exception as e:
+            self.logger.error('Failed to restart advertising: ' + str(e))
+
+    def monitor_btmon(self):
+        restart_delay = 2
+        max_restart_delay = 30
+
         while True:
-            lines, readable = f.read_lines()
-            if not readable: break
-            for line in lines:                
-                if line != '':
-                    line = line.decode()
-                    if 'Data:' in line:
-                        data = line.replace(' ','').replace('\x1b','').replace('[0m','').replace('Data:','')
-                        self.process_rx(data)
-                        self.logger.info('New data '+ data)
+            out_r, out_w = pty.openpty()
+            cmd = ["sudo", "btmon"]
+            try:
+                process = subprocess.Popen(cmd, stdout=out_w)
+                self.logger.info('btmon started (pid %d)', process.pid)
+            except Exception as e:
+                self.logger.error('Failed to start btmon: ' + str(e))
+                os.close(out_r)
+                os.close(out_w)
+                time.sleep(restart_delay)
+                restart_delay = min(restart_delay * 2, max_restart_delay)
+                continue
+
+            f = OutStream(out_r)
+            restart_delay = 2  # reset backoff on successful start
+
+            try:
+                while True:
+                    lines, readable = f.read_lines()
+                    if not readable:
+                        break
+                    for line in lines:
+                        if line != b'':
+                            try:
+                                line = line.decode(errors='ignore')
+                            except Exception:
+                                continue
+                            if 'Disconnect Complete' in line:
+                                self._restart_advertising()
+                            elif 'Data:' in line:
+                                data = line.replace(' ','').replace('\x1b','').replace('[0m','').replace('Data:','')
+                                self.process_rx(data)
+                                self.logger.info('New data '+ data)
+            except Exception as e:
+                self.logger.error('btmon monitoring error: ' + str(e))
+
+            # Cleanup
+            try:
+                process.terminate()
+                process.wait(timeout=5)
+            except Exception:
+                try:
+                    process.kill()
+                    process.wait(timeout=5)
+                except Exception:
+                    pass
+            try:
+                os.close(out_r)
+            except OSError:
+                pass
+            try:
+                os.close(out_w)
+            except OSError:
+                pass
+
+            self.logger.warning('btmon exited, restarting in %ds...', restart_delay)
+            time.sleep(restart_delay)
+            restart_delay = min(restart_delay * 2, max_restart_delay)
 
     def process_rx(self,ba):
         new_problem_string= self.unstuffer.process_bytes(ba)
