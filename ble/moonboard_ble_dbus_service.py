@@ -166,9 +166,10 @@ class MoonApplication(dbus.service.Object):
         flags = self.unstuffer.flags
 
         if new_problem_string is not None:
-            problem= decode_problem_string(new_problem_string, flags)
+            problem=decode_problem_string(new_problem_string, flags)
             self.new_problem(json.dumps(problem))
-            self.unstuffer.flags = ''
+            self._sendmessage("/problem", json.dumps(problem)) # FIXME
+            self.unstuffer.flags = []
             start_adv(self.logger)
 
     @dbus.service.signal(dbus_interface="com.moonboard",
