@@ -1,4 +1,4 @@
 #!/bin/bash
-for s in moonboard_led.service moonboard_ble.service;
-sudo systemctl restart $service
+for service in moonboard_led.service moonboard_ble.service; do
+    sudo systemctl restart "$service"
 done
