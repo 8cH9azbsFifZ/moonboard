@@ -53,21 +53,20 @@ async def get_problems_list_from_ids(conn, Ids):
 
 
 async def user_query_get_problems(conn, Grades, Name, Setter, holdSetMounted={'A', 'B', 'OS'}, Benchmark=False, limit=2001,**kwargs):
-    #hold set to remove
-    GradeStr = ', '.join('{!r}'.format(s) for s in Grades)
+    placeholders = ', '.join('?' for _ in Grades)
+    name_pattern = f"%{Name}%"
+    setter_pattern = f"%{Setter}%"
     cmd = f"""
     SELECT Id, Name, Grade, (Firstname|| " " || Lastname) AS Setter, IsBenchmark  
     FROM problems 
     WHERE 
-        Grade IN ({GradeStr})
-        and
-        Name LIKE "%{Name}%"
-        and 
-        Setter LIKE "%{Setter}%"
-        --{"and IsBenchmark IS true" if Benchmark else ""}   
-    LIMIT {limit}
+        Grade IN ({placeholders})
+        AND Name LIKE ?
+        AND (Firstname || " " || Lastname) LIKE ?
+    LIMIT ?
     """
-    async with conn.execute(cmd) as cursor:
+    params = list(Grades) + [name_pattern, setter_pattern, limit]
+    async with conn.execute(cmd, params) as cursor:
         results = [p async for p in cursor]
         return results, (len(results) != limit)
 

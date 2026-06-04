@@ -8,6 +8,7 @@ import logging
 from moonboard_app_protocol import UnstuffSequence, decode_problem_string
 import paho.mqtt.client as mqtt
 
+import errno
 import os
 import errno
 import time

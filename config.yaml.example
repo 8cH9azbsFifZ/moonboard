@@ -1,0 +1,36 @@
+# Moonboard Configuration
+# Copy to config.yaml and adjust for your installation
+
+# BLE Service
+ble:
+  adapter: /org/bluez/hci0
+  device_name: "Moonboard A"
+
+# MQTT Broker
+mqtt:
+  host: localhost
+  port: 1883
+  topic_problem: moonboard/ble/problem
+  topic_status: moonboard/ble/status
+
+# LED Configuration
+led:
+  driver_type: PiWS281x    # PiWS281x, WS2801, or SimPixel
+  led_mapping: led_mapping.json
+  brightness: 100
+
+# Board Setup
+board:
+  setup: MoonboardMasters2017
+  type: standard            # standard (18 rows) or mini (12 rows)
+
+# GPIO
+gpio:
+  power_led: 26
+  button: 3
+
+# Colors (R, G, B)
+colors:
+  start: [0, 0, 255]       # Blue
+  moves: [0, 255, 0]       # Green
+  top: [255, 0, 0]         # Red

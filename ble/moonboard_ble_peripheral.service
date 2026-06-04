@@ -1,0 +1,20 @@
+[Unit]
+Description=Moonboard BLE Peripheral Service
+After=bluetooth.target
+Requires=bluetooth.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/moonboard/ble
+ExecStart=/usr/bin/python3 /home/pi/moonboard/ble/moonboard_ble_peripheral.py --mqtt-host localhost
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=moonboard-ble
+
+[Install]
+WantedBy=multi-user.target
