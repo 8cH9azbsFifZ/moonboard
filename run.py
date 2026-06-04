@@ -1,4 +1,10 @@
 # -*- coding: utf-8 -*-
+"""
+DEPRECATED: Legacy D-Bus entry point.
+Use the MQTT-based services instead:
+  - ble/moonboard_ble_peripheral.py (BLE service)
+  - led/moonboard_led_service.py (LED service)
+"""
 import argparse
 from led.moonboard import MoonBoard,LED_LAYOUT
 from gi.repository import GLib

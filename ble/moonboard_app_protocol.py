@@ -80,25 +80,26 @@ class UnstuffSequence():
 
         s = bytearray.fromhex(ba).decode(errors="ignore")
         self.logger.debug("incoming bytes:"+str(s))
+
+        if not s:
+            return None
         
         if s[0] == '~':
-            """
-            if the string begins with ~  means that there are flags
-            the legend is: 
-            M = mini board
-            D = duble led above and below holds
-            B = colors and use start left right foot end match
-            """
+            # Flag processing:
+            # M = mini board
+            # D = double led above and below holds
+            # B = colors and use start left right foot end match
+            # Format: ~<flags>* where flags is 1 or more characters
             s = s[1:]
-            self.flags.append(s[0])
-            s = s[1:]
-            if s[0] == '*':
-                s = s[1:]
-            else:
-                s = s[1:]
+            # Extract all flag characters until '*'
+            while s and s[0] != '*':
                 self.flags.append(s[0])
                 s = s[1:]
-                s = s[1:]
+            if s and s[0] == '*':
+                s = s[1:]  # consume '*'
+
+        if not s:
+            return None
 
         if s[:2]==self.START:
             self.logger.debug('START')

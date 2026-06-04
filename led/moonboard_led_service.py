@@ -5,19 +5,17 @@ from functools import partial
 import json
 import RPi.GPIO as GPIO
 import os
-#import signal
 import sys
 import logging
 import time
-import paho.mqtt.client as paho # FIXME pip install 
-import math # floor
+import paho.mqtt.client as paho
+import math
 
 # external power LED and power button
 LED_GPIO = 26
 BUTTON_GPIO = 3
 
 
-import logging
 logging.basicConfig(level=logging.DEBUG,
                     format='Display(%(threadName)-10s) %(message)s',
                     )
@@ -63,17 +61,13 @@ class Database():
 
 
 
-    def _record_data(self, hostname="localhost",port=1883):
-        logging.debug("Start recording data from mqtt to database")
-        self._client= paho.Client("client-001")  # FIXME
-        self._client.on_message=self._on_message
-        self._client.connect(hostname,port,60)#connect
-
-        # FIXME: subscribe to all?
-        
+    def _record_data(self, hostname="localhost", port=1883):
+        logging.debug("Start recording data from mqtt")
+        self._client = paho.Client(client_id="moonboard-led")
+        self._client.on_message = self._on_message
+        self._client.reconnect_delay_set(min_delay=1, max_delay=30)
+        self._client.connect(hostname, port, 60)
         self._client.subscribe("moonboard/ble/problem")
-
-
         self._client.loop_forever()
 
 # Main stuff
@@ -94,10 +88,12 @@ if __name__ == "__main__":
                         default='led_mapping.json', 
                         )
 
+    parser.add_argument('--mqtt-host', default='localhost',
+                        help='MQTT broker hostname (default: localhost)')
+
     parser.add_argument('--debug',  action = "store_true")
 
     args = parser.parse_args()
-    argsd=vars(args)
     logger = logging.getLogger('run')
     logger.setLevel(logging.DEBUG)
     logger.addHandler(logging.StreamHandler())
@@ -107,9 +103,8 @@ if __name__ == "__main__":
     else:
         logger.setLevel(logging.INFO)
 
-    #problems
     led_layout = args.led_mapping
     driver_type = args.driver_type
 
     d = Database(driver_type=driver_type, led_layout=led_layout)
-    d._record_data(hostname="raspi-moonboard")   
+    d._record_data(hostname=args.mqtt_host)   

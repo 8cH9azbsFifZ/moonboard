@@ -1,4 +1,9 @@
 import sys
+"""
+DEPRECATED: This file is superseded by moonboard_ble_peripheral.py
+which uses proper BlueZ D-Bus GATT instead of btmon sniffing.
+Kept for reference only.
+"""
 import dbus, dbus.mainloop.glib
 from gi.repository import GLib
 from gatt_base.gatt_lib_advertisement import Advertisement

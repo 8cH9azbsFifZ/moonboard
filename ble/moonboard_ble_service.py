@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+DEPRECATED: This file is superseded by moonboard_ble_peripheral.py
+which uses proper BlueZ D-Bus GATT instead of btmon sniffing.
+Kept for reference only.
+"""
 import sys
 from gatt_base.gatt_lib_advertisement import Advertisement
 from gatt_base.gatt_lib_characteristic import Characteristic
@@ -10,13 +16,12 @@ import paho.mqtt.client as mqtt
 
 import errno
 import os
-import errno
 import time
 import threading
 import pty
  
-# FIXME: remove dead code
-# FIXME: cleanup code & simplify(!)
+# DEPRECATED: See moonboard_ble_peripheral.py for the current implementation.
+# This file uses btmon sniffing which is fragile. Kept for reference.
 
 BLUEZ_SERVICE_NAME =           'org.bluez'
 DBUS_OM_IFACE =                'org.freedesktop.DBus.ObjectManager'
@@ -29,7 +34,8 @@ UART_TX_CHARACTERISTIC_UUID =  '6e400003-b5a3-f393-e0a9-e50e24dcca9e'
 LOCAL_NAME =                   'Moonboard A'
 SERVICE_NAME=                  'com.moonboard'
 
-# FIXME: on connection lost: error: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 2: invalid start byte
+# Known issue: UnicodeDecodeError on 0xff bytes from multiple connections.
+# Fixed in moonboard_ble_peripheral.py via proper GATT WriteValue callback.
 
 class RxCharacteristic(Characteristic):
     def __init__(self, bus, index, service, process_rx):
@@ -47,7 +53,8 @@ class UartService(Service):
         self.add_characteristic(RxCharacteristic(bus, 1, self, process_rx))   
 
 
-class OutStream: # FIXME: simplify
+class OutStream:
+    """Reads lines from a file descriptor (pty output from btmon)."""
     def __init__(self, fileno):
         self._fileno = fileno
         self._buffer = b""

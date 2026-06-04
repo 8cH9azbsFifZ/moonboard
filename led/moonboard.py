@@ -96,25 +96,21 @@ class MoonBoard:
     def display_holdset(self, holdset="Hold Set A", duration=10, **kwds): 
         print ("Display holdset: " + str(holdset))
 
-        with open('../problems/HoldSetup.json') as json_file: # FIXME: path 
+        holdsetup_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                       'problems', 'HoldSetup.json')
+        with open(holdsetup_path) as json_file:
             data = json.load(json_file)
             for hold in data[self.SETUP]:
                 hs = (data[self.SETUP][hold]['HoldSet']) 
                 color = COLORS.black
     
-                if (hs == holdset):# FIXME
+                if (hs == holdset):
                         color = COLORS.green                    
     
                 self.layout.set(self.MAPPING[hold], color)
-
-                #self.set_hold (hold, color)
-                #print "Orientation"
         
         self.layout.push_to_driver()
-
-        wait_holdset_duration = duration # FIXME
-        time.sleep(wait_holdset_duration)
-
+        time.sleep(duration)
         self.clear()
                 
                 
