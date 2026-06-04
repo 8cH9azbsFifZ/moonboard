@@ -77,7 +77,7 @@ class Advertisement(dbus.service.Object):
         self.ad_type = 'peripheral'
         self.local_name = DEFAULT_LOCAL_NAME
         self.service_uuids = [NUS_SERVICE_UUID]
-        self.include_tx_power = True
+        self.include_tx_power = False
         dbus.service.Object.__init__(self, bus, self.path)
 
     def get_properties(self):
@@ -333,6 +333,13 @@ class MoonboardBLEPeripheral:
                                            daemon=True, name='rx-worker')
         self._rx_worker.start()
 
+        # Monitor device disconnects to cleanup state and re-advertise
+        bus.add_signal_receiver(
+            self._on_properties_changed,
+            signal_name='PropertiesChanged',
+            dbus_interface=DBUS_PROP_IFACE,
+            path_keyword='path')
+
         # Run main loop
         self.loop = GLib.MainLoop()
         self.logger.info('Moonboard BLE Peripheral running...')
@@ -350,15 +357,22 @@ class MoonboardBLEPeripheral:
                 self._mqtt_client.disconnect()
 
     def _setup_mqtt(self):
-        """Connect to MQTT broker with reconnect."""
+        """Connect to MQTT broker with reconnect and retry."""
         self._mqtt_client = mqtt.Client(client_id='moonboard-ble')
         self._mqtt_client.reconnect_delay_set(min_delay=1, max_delay=30)
-        try:
-            self._mqtt_client.connect(self.mqtt_host, self.mqtt_port, keepalive=60)
-            self._mqtt_client.loop_start()
-            self.logger.info(f'MQTT connected to {self.mqtt_host}:{self.mqtt_port}')
-        except Exception as e:
-            self.logger.error(f'MQTT connection failed: {e}')
+        max_retries = 10
+        for attempt in range(1, max_retries + 1):
+            try:
+                self._mqtt_client.connect(self.mqtt_host, self.mqtt_port, keepalive=60)
+                self._mqtt_client.loop_start()
+                self.logger.info(f'MQTT connected to {self.mqtt_host}:{self.mqtt_port}')
+                return
+            except Exception as e:
+                self.logger.warning(f'MQTT connect attempt {attempt}/{max_retries} failed: {e}')
+                if attempt < max_retries:
+                    import time
+                    time.sleep(min(attempt * 2, 15))
+        self.logger.error('MQTT connection failed after all retries, continuing without MQTT')
 
     def _publish_status(self, status):
         if self._mqtt_client:
@@ -401,13 +415,14 @@ class MoonboardBLEPeripheral:
             problem = decode_problem_string(new_problem_string, flags)
             self.logger.info(f'Problem decoded: {problem}')
             self._publish_problem(problem)
-            unstuffer.flags = ''
+            unstuffer.flags = []
 
     def _setup_hcitool_advertising(self):
         """Fallback: setup BLE advertising via raw hcitool HCI commands.
         
         Used only when BlueZ LEAdvertisingManager1 is not available.
         """
+        import subprocess
         self.logger.info('Setting up hcitool advertising...')
         cmds = [
             "hcitool -i hci0 cmd 0x08 0x000a 00",
@@ -418,7 +433,30 @@ class MoonboardBLEPeripheral:
             "hcitool -i hci0 cmd 0x08 0x000a 01",
         ]
         for cmd in cmds:
-            os.system("sudo " + cmd)
+            try:
+                subprocess.run(["sudo"] + cmd.split(),
+                               check=True, capture_output=True, timeout=5)
+            except subprocess.CalledProcessError as e:
+                self.logger.error(f'hcitool command failed: {cmd} → {e.stderr}')
+            except subprocess.TimeoutExpired:
+                self.logger.error(f'hcitool command timed out: {cmd}')
+
+    def _restart_advertising_on_disconnect(self):
+        """Re-enable hcitool advertising after a device disconnects (fallback mode)."""
+        if getattr(self, '_use_hcitool_fallback', False):
+            self.logger.info('Re-enabling hcitool advertising after disconnect')
+            self._setup_hcitool_advertising()
+
+    def _on_properties_changed(self, interface, changed, invalidated, path=''):
+        """Handle BlueZ device property changes (disconnect detection)."""
+        if interface != 'org.bluez.Device1':
+            return
+        if 'Connected' in changed and not changed['Connected']:
+            self.logger.info(f'Device disconnected: {path}')
+            # Cleanup stale protocol state
+            self.unstuffers.pop(path, None)
+            # Re-enable advertising in fallback mode
+            self._restart_advertising_on_disconnect()
 
     def _register_app_cb(self):
         self.logger.info('GATT application registered')

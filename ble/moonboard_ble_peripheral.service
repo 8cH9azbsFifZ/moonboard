@@ -1,13 +1,17 @@
 [Unit]
 Description=Moonboard BLE Peripheral Service
-After=bluetooth.target
-Requires=bluetooth.target
+Wants=bluetooth.service dbus.service hciuart.service mosquitto.service
+After=bluetooth.service dbus.service hciuart.service mosquitto.service network-online.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
 [Service]
 Type=simple
 User=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
 WorkingDirectory=/home/pi/moonboard/ble
 ExecStart=/usr/bin/python3 /home/pi/moonboard/ble/moonboard_ble_peripheral.py --mqtt-host localhost
 Restart=on-failure

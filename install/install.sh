@@ -1,21 +1,31 @@
 #!/bin/bash
+set -euo pipefail
 
-# FIXME: must run from this dir in checkout out version
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-#./10-prepare-raspi.sh # FIXME
-#./20-prepare-python.sh # FIXME
-#./30-install-services.sh # FIXME
+echo "=== Moonboard Installation ==="
 
-echo "Applying patch to bluez for iPhone"
-sudo sed -i '/ExecStart/ c ExecStart=/usr/lib/bluetooth/bluetoothd -P battery' /usr/lib/systemd/system/bluetooth.service
+# Apply bluetooth patch for iPhone compatibility
+echo "Applying BlueZ override for iPhone BLE..."
+sudo mkdir -p /etc/systemd/system/bluetooth.service.d
+cat <<EOF | sudo tee /etc/systemd/system/bluetooth.service.d/moonboard.conf
+[Service]
+ExecStart=
+ExecStart=/usr/lib/bluetooth/bluetoothd --experimental -P battery
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart bluetooth
 
+# Install system dependencies
+echo "Installing system packages..."
+sudo apt-get -y install bluetooth bluez python3-dbus python3-gi mosquitto mosquitto-clients
 
-#echo "Install application"
-#test -d moonboard || git clone https://github.com/8cH9azbsFifZ/moonboard.git
-#cd moonboard
-#git pull
+# Install Python dependencies
+echo "Installing Python packages..."
+pip3 install -r "$SCRIPT_DIR/requirements.txt"
 
+# Install services
+"$SCRIPT_DIR/30-install-services.sh"
 
-
-#printf " Restarting" # FIXME
-#sudo shutdown -r now
+echo ""
+echo "Installation complete. Reboot recommended."

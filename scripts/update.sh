@@ -1,8 +1,8 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BRANCH="${1:-main}"
+BRANCH="${1:-master}"
 
 echo "=== Moonboard Update ==="
 echo "Repo: $REPO_DIR"
@@ -16,10 +16,10 @@ git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git pull origin "$BRANCH"
 
-# Restart services
+# Restart services (prefer new peripheral, fallback to legacy)
 echo ""
 echo "Restarting services..."
-for service in moonboard_ble moonboard_led; do
+for service in moonboard_ble_peripheral moonboard_led; do
     if systemctl is-enabled "${service}.service" &>/dev/null; then
         echo "  Restarting ${service}..."
         sudo systemctl restart "${service}.service"

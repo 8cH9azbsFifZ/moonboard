@@ -121,4 +121,13 @@ class UnstuffSequence():
                 self.logger.debug('error: not started')
                 self.s= ''
         else:
-            self.s+=s
+            # Only append if a sequence is open, otherwise ignore stray data
+            if self.s:
+                self.s+=s
+                # Guard against unbounded buffer growth
+                if len(self.s) > 512:
+                    self.logger.warning('protocol frame too long (>512), resetting')
+                    self.s = ''
+                    self.flags = []
+            else:
+                self.logger.debug('ignoring data before START')

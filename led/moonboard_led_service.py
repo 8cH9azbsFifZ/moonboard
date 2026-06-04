@@ -30,10 +30,38 @@ class Database():
         self._update_interval = 1.0 #0.5 # Update interval for display in seconds
 
 
+    def _on_connect(self, client, userdata, flags, rc):
+        if rc == 0:
+            logging.info("MQTT connected, subscribing to moonboard/ble/problem")
+            client.subscribe("moonboard/ble/problem", qos=1)
+        else:
+            logging.error(f"MQTT connection failed with rc={rc}")
+
+    def _on_disconnect(self, client, userdata, rc):
+        if rc != 0:
+            logging.warning(f"MQTT unexpected disconnect (rc={rc}), will reconnect")
+
     def _on_message(self, client, userdata, message):
-        logging.debug("Received message " + str(message.payload.decode("utf-8")))
-        #mm = message.payload.decode("utf-8")
-        msg = json.loads(message.payload.decode("utf-8"))
+        try:
+            payload = message.payload.decode("utf-8")
+        except UnicodeDecodeError:
+            logging.error("Invalid UTF-8 in MQTT message, ignoring")
+            return
+
+        try:
+            msg = json.loads(payload)
+        except json.JSONDecodeError:
+            logging.error(f"Invalid JSON in MQTT message: {payload[:100]}")
+            return
+
+        # Validate required keys
+        required_keys = ["START", "MOVES", "TOP"]
+        for key in required_keys:
+            if key not in msg:
+                logging.error(f"Missing key '{key}' in problem message")
+                return
+
+        logging.debug("Received message " + payload)
 
         GREEN = (0,255,0)
         BLUE = (0,0,255)
@@ -42,21 +70,27 @@ class Database():
         CYAN = (0,255,255)
         PINK = (255,96,136)
 
-        self._MOONBOARD.clear()
+        # Build new frame in memory first, then push once (no flicker)
+        self._MOONBOARD.layout.all_off()
         for s in msg["START"]:
-            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[s], GREEN)
-        for m in msg["MOVES"]:
-            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[m], BLUE)        
-        for t in msg["LEFT"]:
-            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], VIOLET)
-        for t in msg["FOOT"]:
-            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], CYAN)
-        for t in msg["MATCH"]:
-            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], PINK)
+            if s in self._MOONBOARD.MAPPING:
+                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[s], GREEN)
+        for m in msg.get("MOVES", []):
+            if m in self._MOONBOARD.MAPPING:
+                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[m], BLUE)        
+        for t in msg.get("LEFT", []):
+            if t in self._MOONBOARD.MAPPING:
+                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], VIOLET)
+        for t in msg.get("FOOT", []):
+            if t in self._MOONBOARD.MAPPING:
+                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], CYAN)
+        for t in msg.get("MATCH", []):
+            if t in self._MOONBOARD.MAPPING:
+                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], PINK)
         for t in msg["TOP"]:
-            self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], RED)
+            if t in self._MOONBOARD.MAPPING:
+                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], RED)
         
-        #self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[ihold], color_1er_done)
         self._MOONBOARD.layout.push_to_driver()
 
 
@@ -64,11 +98,24 @@ class Database():
     def _record_data(self, hostname="localhost", port=1883):
         logging.debug("Start recording data from mqtt")
         self._client = paho.Client(client_id="moonboard-led")
+        self._client.on_connect = self._on_connect
+        self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message
         self._client.reconnect_delay_set(min_delay=1, max_delay=30)
-        self._client.connect(hostname, port, 60)
-        self._client.subscribe("moonboard/ble/problem")
-        self._client.loop_forever()
+        # Retry initial connection (broker may not be up at boot)
+        max_retries = 20
+        for attempt in range(1, max_retries + 1):
+            try:
+                self._client.connect(hostname, port, 60)
+                break
+            except Exception as e:
+                logging.warning(f"MQTT connect attempt {attempt}/{max_retries}: {e}")
+                if attempt < max_retries:
+                    time.sleep(min(attempt * 2, 15))
+                else:
+                    logging.error("MQTT connection failed, exiting")
+                    sys.exit(1)
+        self._client.loop_forever(retry_first_connection=True)
 
 # Main stuff
 

@@ -1,10 +1,19 @@
 #!/bin/bash
+set -euo pipefail
 
-echo "Install services" # FIXME
-cd /home/pi/moonboard/ble
-make install
-cd ..
+echo "Install services"
+cd /home/pi/moonboard
 
-cd /home/pi/moonboard/led
-make install 
-cd ..
+# Install new BLE peripheral service
+sudo cp ble/moonboard_ble_peripheral.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable moonboard_ble_peripheral.service
+
+# Install LED service
+if [ -f led/moonboard_led.service ]; then
+    sudo cp led/moonboard_led.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable moonboard_led.service
+fi
+
+echo "Services installed."
