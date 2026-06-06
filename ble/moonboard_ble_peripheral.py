@@ -461,7 +461,21 @@ class MoonboardBLEPeripheral:
     def _recover_advertising(self):
         """Recover from advertising failure: reset hci0 and re-register GATT + advertisement."""
         self.logger.warning('Watchdog: advertising not active, attempting recovery...')
+        self._recovering = True
         try:
+            # Unregister existing GATT/advertisement first (ignore errors if already gone)
+            if self._adapter_obj:
+                try:
+                    gatt_mgr = dbus.Interface(self._adapter_obj, GATT_MANAGER_IFACE)
+                    gatt_mgr.UnregisterApplication(self.app.get_path())
+                except dbus.exceptions.DBusException:
+                    pass
+                try:
+                    ad_mgr = dbus.Interface(self._adapter_obj, LE_ADVERTISING_MANAGER_IFACE)
+                    ad_mgr.UnregisterAdvertisement(self.adv.get_path())
+                except dbus.exceptions.DBusException:
+                    pass
+
             # Reset hci0
             subprocess.run(['hciconfig', 'hci0', 'reset'],
                           capture_output=True, timeout=5)
@@ -472,8 +486,8 @@ class MoonboardBLEPeripheral:
                           capture_output=True, timeout=5)
             time.sleep(1)
 
-            # Re-register GATT application
-            if self._adapter_obj and self._bus:
+            # Re-acquire adapter object (reset may invalidate it)
+            if self._bus:
                 adapter_obj = self._bus.get_object(BLUEZ_SERVICE_NAME, self.adapter)
                 self._adapter_obj = adapter_obj
 
@@ -481,7 +495,7 @@ class MoonboardBLEPeripheral:
                 gatt_manager.RegisterApplication(
                     self.app.get_path(), {},
                     reply_handler=self._register_app_cb,
-                    error_handler=self._register_app_error_cb)
+                    error_handler=self._register_app_recovery_error_cb)
 
                 # Re-register advertisement
                 try:
@@ -506,6 +520,8 @@ class MoonboardBLEPeripheral:
         except Exception as e:
             self.logger.error(f'Watchdog: recovery failed with exception: {e}')
             return False
+        finally:
+            self._recovering = False
 
     def _watchdog_tick(self):
         """GLib timeout callback: check advertising and recover if needed."""
@@ -591,8 +607,14 @@ class MoonboardBLEPeripheral:
 
     def _register_app_error_cb(self, error):
         self.logger.error(f'Failed to register GATT application: {error}')
+        if getattr(self, '_recovering', False):
+            return  # don't quit during recovery
         if self.loop:
             self.loop.quit()
+
+    def _register_app_recovery_error_cb(self, error):
+        """Error callback for GATT re-registration during recovery (never quits the loop)."""
+        self.logger.warning(f'Watchdog: GATT re-registration failed: {error}')
 
     def _register_ad_cb(self):
         self.logger.info('Advertisement registered')
