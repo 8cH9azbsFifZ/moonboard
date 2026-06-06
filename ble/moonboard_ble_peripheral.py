@@ -644,14 +644,41 @@ class MoonboardBLEPeripheral:
             self.unstuffers.pop(path, None)
             # Re-enable advertising in fallback mode
             self._restart_advertising_on_disconnect()
-            # Schedule immediate advertising check (5s delay for BlueZ to settle)
-            GLib.timeout_add_seconds(5, self._post_disconnect_check)
+            # Force re-advertisement immediately (BCM43438 needs active kick)
+            GLib.timeout_add_seconds(2, self._force_readvertise_after_disconnect)
 
     def _post_disconnect_check(self):
         """Check advertising shortly after disconnect and recover if needed."""
         if not self._check_advertising_active():
             self.logger.warning('Post-disconnect: advertising not active, recovering...')
             self._recover_advertising()
+        return False  # one-shot timer
+
+    def _force_readvertise_after_disconnect(self):
+        """Force re-registration of advertisement after every disconnect.
+        
+        The BCM43438 on Pi Zero often fails to resume advertising after a
+        disconnect even though BlueZ reports ActiveInstances=1. The only
+        reliable fix is to unregister and re-register the advertisement,
+        which forces BlueZ to re-issue the HCI advertising commands.
+        """
+        self.logger.info('Post-disconnect: forcing advertisement re-registration')
+        try:
+            if self._adapter_obj:
+                ad_mgr = dbus.Interface(self._adapter_obj, LE_ADVERTISING_MANAGER_IFACE)
+                # Unregister
+                try:
+                    ad_mgr.UnregisterAdvertisement(self.adv.get_path())
+                except dbus.exceptions.DBusException:
+                    pass
+                time.sleep(0.5)
+                # Re-register
+                ad_mgr.RegisterAdvertisement(
+                    self.adv.get_path(), {},
+                    reply_handler=self._register_ad_cb,
+                    error_handler=self._register_ad_error_cb)
+        except Exception as e:
+            self.logger.error(f'Post-disconnect re-advertise failed: {e}')
         return False  # one-shot timer
 
     def _force_readvertise(self):
