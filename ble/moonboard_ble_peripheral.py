@@ -298,6 +298,9 @@ class MoonboardBLEPeripheral:
         self._watchdog_interval = 30  # seconds
         self._watchdog_backoff = 30   # current interval (grows on failure)
         self._watchdog_failures = 0
+        self._last_connect_time = None
+        self._last_disconnect_time = None
+        self._connection_timeout_warned = False
 
     def start(self):
         """Initialize and run the BLE peripheral."""
@@ -416,6 +419,8 @@ class MoonboardBLEPeripheral:
         if device not in self.unstuffers:
             self.unstuffers[device] = UnstuffSequence(self.logger)
             self.logger.info(f'New device connected: {device}')
+            self._last_connect_time = time.time()
+            self._connection_timeout_warned = False
 
         unstuffer = self.unstuffers[device]
 
@@ -431,31 +436,65 @@ class MoonboardBLEPeripheral:
             unstuffer.flags = []
 
     def _check_advertising_active(self):
-        """Check if LE advertising is active on the HCI controller.
+        """Check if LE advertising is active — cross-validates D-Bus and HCI state.
         
-        Queries BlueZ LEAdvertisingManager1.ActiveInstances via D-Bus.
-        Returns True if at least one advertisement is active.
+        Returns True only if BOTH BlueZ D-Bus AND the HCI controller agree
+        that advertising is active. Logs detailed state for diagnostics.
         """
+        dbus_active = False
+        hci_flags = ''
+
+        # Check 1: D-Bus ActiveInstances
         try:
-            if not self._bus:
-                return False
-            adapter_obj = self._bus.get_object(BLUEZ_SERVICE_NAME, self.adapter)
-            props = dbus.Interface(adapter_obj, DBUS_PROP_IFACE)
-            active = props.Get(LE_ADVERTISING_MANAGER_IFACE, 'ActiveInstances')
-            return int(active) > 0
+            if self._bus:
+                adapter_obj = self._bus.get_object(BLUEZ_SERVICE_NAME, self.adapter)
+                props = dbus.Interface(adapter_obj, DBUS_PROP_IFACE)
+                active = props.Get(LE_ADVERTISING_MANAGER_IFACE, 'ActiveInstances')
+                dbus_active = int(active) > 0
         except dbus.exceptions.DBusException as e:
-            self.logger.debug(f'Watchdog: D-Bus check failed ({e}), trying hcitool fallback')
-            # Fallback for older BlueZ without ActiveInstances property
-            try:
-                result = subprocess.run(
-                    ['hciconfig', 'hci0'],
-                    capture_output=True, text=True, timeout=5)
-                return 'LEADV' in result.stdout
-            except (subprocess.TimeoutExpired, OSError):
-                return False
+            self.logger.debug(f'Watchdog: D-Bus ActiveInstances check failed: {e}')
         except Exception as e:
-            self.logger.error(f'Watchdog: failed to check advertising state: {e}')
-            return False
+            self.logger.error(f'Watchdog: D-Bus check error: {e}')
+
+        # Check 2: HCI controller flags
+        try:
+            result = subprocess.run(
+                ['hciconfig', 'hci0'],
+                capture_output=True, text=True, timeout=5)
+            hci_flags = result.stdout.strip()
+            # Extract the flags line (e.g. "UP RUNNING PSCAN LEADV")
+            for line in hci_flags.split('\n'):
+                if 'UP' in line and 'RUNNING' in line:
+                    hci_flags = line.strip()
+                    break
+        except (subprocess.TimeoutExpired, OSError) as e:
+            self.logger.error(f'Watchdog: hciconfig check failed: {e}')
+            hci_flags = 'ERROR'
+
+        # Check 3: Active connections (advertising pauses during connection on Pi Zero)
+        has_connection = False
+        try:
+            result = subprocess.run(
+                ['hcitool', 'con'],
+                capture_output=True, text=True, timeout=5)
+            has_connection = 'ACL' in result.stdout or 'LE' in result.stdout
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+        self.logger.debug(
+            f'Watchdog: dbus_active={dbus_active}, hci=[{hci_flags}], '
+            f'connected={has_connection}')
+
+        # If a device is connected, advertising naturally pauses (Pi Zero = single-connection)
+        if has_connection:
+            return True
+
+        # Trust D-Bus as primary signal — BlueZ manages advertising via its own kernel interface
+        # The LEADV flag may not appear when using LEAdvertisingManager1
+        if dbus_active:
+            return True
+
+        return False
 
     def _recover_advertising(self):
         """Recover from advertising failure: reset hci0 and re-register GATT + advertisement."""
@@ -524,12 +563,25 @@ class MoonboardBLEPeripheral:
 
     def _watchdog_tick(self):
         """GLib timeout callback: check advertising and recover if needed."""
-        if self._check_advertising_active():
-            # All good — reset backoff on success
+        is_active = self._check_advertising_active()
+
+        if is_active:
+            # Reset backoff on success
             if self._watchdog_failures > 0:
                 self.logger.info('Watchdog: advertising confirmed active, resetting backoff')
             self._watchdog_failures = 0
             self._watchdog_backoff = self._watchdog_interval
+
+            # Stale state detection: if we had a disconnect but no new connect for 5+ min
+            if (self._last_disconnect_time and not self._connection_timeout_warned):
+                idle_time = time.time() - self._last_disconnect_time
+                if idle_time > 300:  # 5 minutes
+                    self.logger.warning(
+                        f'Watchdog: no connection for {int(idle_time)}s since last disconnect. '
+                        f'Advertising claims active but may be stale — forcing re-register')
+                    self._connection_timeout_warned = True
+                    self._force_readvertise()
+
             return True  # keep timer running
 
         # Advertising not active — attempt recovery
@@ -587,6 +639,7 @@ class MoonboardBLEPeripheral:
             return
         if 'Connected' in changed and not changed['Connected']:
             self.logger.info(f'Device disconnected: {path}')
+            self._last_disconnect_time = time.time()
             # Cleanup stale protocol state
             self.unstuffers.pop(path, None)
             # Re-enable advertising in fallback mode
@@ -600,6 +653,29 @@ class MoonboardBLEPeripheral:
             self.logger.warning('Post-disconnect: advertising not active, recovering...')
             self._recover_advertising()
         return False  # one-shot timer
+
+    def _force_readvertise(self):
+        """Force re-registration of advertisement without full hci0 reset.
+        
+        Used when D-Bus says advertising is active but no phone can connect
+        (stale advertisement state).
+        """
+        self.logger.info('Force re-advertising: unregister + re-register advertisement')
+        try:
+            if self._adapter_obj:
+                ad_mgr = dbus.Interface(self._adapter_obj, LE_ADVERTISING_MANAGER_IFACE)
+                try:
+                    ad_mgr.UnregisterAdvertisement(self.adv.get_path())
+                except dbus.exceptions.DBusException:
+                    pass
+                time.sleep(1)
+                ad_mgr.RegisterAdvertisement(
+                    self.adv.get_path(), {},
+                    reply_handler=self._register_ad_cb,
+                    error_handler=self._register_ad_error_cb)
+        except Exception as e:
+            self.logger.error(f'Force re-advertise failed: {e}, trying full recovery')
+            self._recover_advertising()
 
     def _register_app_cb(self):
         self.logger.info('GATT application registered')
