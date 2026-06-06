@@ -572,15 +572,15 @@ class MoonboardBLEPeripheral:
             self._watchdog_failures = 0
             self._watchdog_backoff = self._watchdog_interval
 
-            # Stale state detection: if we had a disconnect but no new connect for 5+ min
-            if (self._last_disconnect_time and not self._connection_timeout_warned):
-                idle_time = time.time() - self._last_disconnect_time
-                if idle_time > 300:  # 5 minutes
-                    self.logger.warning(
-                        f'Watchdog: no connection for {int(idle_time)}s since last disconnect. '
-                        f'Advertising claims active but may be stale — forcing re-register')
-                    self._connection_timeout_warned = True
-                    self._force_readvertise()
+            # Proactive re-registration every 2 minutes to keep BCM43438 fresh
+            # The chip's advertising state degrades over time without connections
+            if not hasattr(self, '_ticks_since_readvertise'):
+                self._ticks_since_readvertise = 0
+            self._ticks_since_readvertise += 1
+            if self._ticks_since_readvertise >= 4:  # 4 * 30s = 2 min
+                self._ticks_since_readvertise = 0
+                self.logger.debug('Watchdog: proactive advertisement refresh')
+                self._force_readvertise_after_disconnect()
 
             return True  # keep timer running
 
