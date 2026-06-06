@@ -25,8 +25,10 @@ import os
 import json
 import logging
 import queue
+import subprocess
 import threading
 import signal
+import time
 
 import dbus
 import dbus.service
@@ -291,11 +293,17 @@ class MoonboardBLEPeripheral:
         self.loop = None
         self._mqtt_client = None
         self._use_hcitool_fallback = False
+        self._bus = None
+        self._adapter_obj = None
+        self._watchdog_interval = 30  # seconds
+        self._watchdog_backoff = 30   # current interval (grows on failure)
+        self._watchdog_failures = 0
 
     def start(self):
         """Initialize and run the BLE peripheral."""
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-        bus = dbus.SystemBus()
+        self._bus = dbus.SystemBus()
+        bus = self._bus
 
         # Setup MQTT
         if HAS_MQTT:
@@ -305,7 +313,8 @@ class MoonboardBLEPeripheral:
         self.logger.info('Registering GATT application...')
         self.app = GATTApplication(bus, self.rx_queue, self.logger)
 
-        adapter_obj = bus.get_object(BLUEZ_SERVICE_NAME, self.adapter)
+        self._adapter_obj = bus.get_object(BLUEZ_SERVICE_NAME, self.adapter)
+        adapter_obj = self._adapter_obj
 
         # Register GATT
         gatt_manager = dbus.Interface(adapter_obj, GATT_MANAGER_IFACE)
@@ -339,6 +348,10 @@ class MoonboardBLEPeripheral:
             signal_name='PropertiesChanged',
             dbus_interface=DBUS_PROP_IFACE,
             path_keyword='path')
+
+        # Start advertising watchdog
+        GLib.timeout_add_seconds(self._watchdog_interval, self._watchdog_tick)
+        self.logger.info(f'Advertising watchdog started (interval={self._watchdog_interval}s)')
 
         # Run main loop
         self.loop = GLib.MainLoop()
@@ -417,6 +430,112 @@ class MoonboardBLEPeripheral:
             self._publish_problem(problem)
             unstuffer.flags = []
 
+    def _check_advertising_active(self):
+        """Check if LE advertising is active on the HCI controller.
+        
+        Uses hcitool to send LE Read Advertising Channel Tx Power command.
+        If the response status is 0x0C (Command Disallowed), advertising is not active.
+        Returns True if advertising appears active, False otherwise.
+        """
+        try:
+            result = subprocess.run(
+                ['hcitool', '-i', 'hci0', 'cmd', '0x08', '0x000e'],
+                capture_output=True, text=True, timeout=5)
+            # Parse HCI response: look for status byte in "01 0E 20 XX"
+            # Status 00 = success (advertising active), 0C = command disallowed (not active)
+            output = result.stdout
+            for line in output.split('\n'):
+                line = line.strip()
+                if line.startswith('>') or 'Event' in line:
+                    continue
+                parts = line.split()
+                if len(parts) >= 4 and parts[0] == '01' and parts[1].upper() == '0E':
+                    status = parts[3].upper()
+                    return status == '00'
+            # If we can't parse, assume not active
+            return False
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
+            self.logger.error(f'Watchdog: failed to check advertising state: {e}')
+            return False
+
+    def _recover_advertising(self):
+        """Recover from advertising failure: reset hci0 and re-register GATT + advertisement."""
+        self.logger.warning('Watchdog: advertising not active, attempting recovery...')
+        try:
+            # Reset hci0
+            subprocess.run(['hciconfig', 'hci0', 'reset'],
+                          capture_output=True, timeout=5)
+            time.sleep(2)
+
+            # Bring hci0 back up
+            subprocess.run(['hciconfig', 'hci0', 'up'],
+                          capture_output=True, timeout=5)
+            time.sleep(1)
+
+            # Re-register GATT application
+            if self._adapter_obj and self._bus:
+                adapter_obj = self._bus.get_object(BLUEZ_SERVICE_NAME, self.adapter)
+                self._adapter_obj = adapter_obj
+
+                gatt_manager = dbus.Interface(adapter_obj, GATT_MANAGER_IFACE)
+                gatt_manager.RegisterApplication(
+                    self.app.get_path(), {},
+                    reply_handler=self._register_app_cb,
+                    error_handler=self._register_app_error_cb)
+
+                # Re-register advertisement
+                try:
+                    ad_manager = dbus.Interface(adapter_obj, LE_ADVERTISING_MANAGER_IFACE)
+                    ad_manager.RegisterAdvertisement(
+                        self.adv.get_path(), {},
+                        reply_handler=self._register_ad_cb,
+                        error_handler=self._register_ad_error_cb)
+                except dbus.exceptions.DBusException:
+                    self._use_hcitool_fallback = True
+                    self._setup_hcitool_advertising()
+
+            # Verify recovery
+            time.sleep(2)
+            if self._check_advertising_active():
+                self.logger.info('Watchdog: advertising recovered successfully')
+                return True
+            else:
+                self.logger.error('Watchdog: recovery attempt failed, advertising still not active')
+                return False
+
+        except Exception as e:
+            self.logger.error(f'Watchdog: recovery failed with exception: {e}')
+            return False
+
+    def _watchdog_tick(self):
+        """GLib timeout callback: check advertising and recover if needed."""
+        if self._check_advertising_active():
+            # All good — reset backoff on success
+            if self._watchdog_failures > 0:
+                self.logger.info('Watchdog: advertising confirmed active, resetting backoff')
+            self._watchdog_failures = 0
+            self._watchdog_backoff = self._watchdog_interval
+            return True  # keep timer running
+
+        # Advertising not active — attempt recovery
+        self._watchdog_failures += 1
+        success = self._recover_advertising()
+
+        if success:
+            self._watchdog_failures = 0
+            self._watchdog_backoff = self._watchdog_interval
+        else:
+            # Exponential backoff: 30 → 60 → 120 → 300 (cap)
+            self._watchdog_backoff = min(self._watchdog_backoff * 2, 300)
+            self.logger.critical(
+                f'Watchdog: recovery failed ({self._watchdog_failures} consecutive). '
+                f'Next attempt in {self._watchdog_backoff}s')
+            # Re-schedule with longer interval
+            GLib.timeout_add_seconds(self._watchdog_backoff, self._watchdog_tick)
+            return False  # cancel current timer, new one scheduled with backoff
+
+        return True  # keep timer running at normal interval
+
     def _setup_hcitool_advertising(self):
         """Fallback: setup BLE advertising via raw hcitool HCI commands.
         
@@ -457,6 +576,15 @@ class MoonboardBLEPeripheral:
             self.unstuffers.pop(path, None)
             # Re-enable advertising in fallback mode
             self._restart_advertising_on_disconnect()
+            # Schedule immediate advertising check (5s delay for BlueZ to settle)
+            GLib.timeout_add_seconds(5, self._post_disconnect_check)
+
+    def _post_disconnect_check(self):
+        """Check advertising shortly after disconnect and recover if needed."""
+        if not self._check_advertising_active():
+            self.logger.warning('Post-disconnect: advertising not active, recovering...')
+            self._recover_advertising()
+        return False  # one-shot timer
 
     def _register_app_cb(self):
         self.logger.info('GATT application registered')
