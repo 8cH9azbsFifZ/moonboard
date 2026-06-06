@@ -433,28 +433,27 @@ class MoonboardBLEPeripheral:
     def _check_advertising_active(self):
         """Check if LE advertising is active on the HCI controller.
         
-        Uses hcitool to send LE Read Advertising Channel Tx Power command.
-        If the response status is 0x0C (Command Disallowed), advertising is not active.
-        Returns True if advertising appears active, False otherwise.
+        Queries BlueZ LEAdvertisingManager1.ActiveInstances via D-Bus.
+        Returns True if at least one advertisement is active.
         """
         try:
-            result = subprocess.run(
-                ['hcitool', '-i', 'hci0', 'cmd', '0x08', '0x000e'],
-                capture_output=True, text=True, timeout=5)
-            # Parse HCI response: look for status byte in "01 0E 20 XX"
-            # Status 00 = success (advertising active), 0C = command disallowed (not active)
-            output = result.stdout
-            for line in output.split('\n'):
-                line = line.strip()
-                if line.startswith('>') or 'Event' in line:
-                    continue
-                parts = line.split()
-                if len(parts) >= 4 and parts[0] == '01' and parts[1].upper() == '0E':
-                    status = parts[3].upper()
-                    return status == '00'
-            # If we can't parse, assume not active
-            return False
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
+            if not self._bus:
+                return False
+            adapter_obj = self._bus.get_object(BLUEZ_SERVICE_NAME, self.adapter)
+            props = dbus.Interface(adapter_obj, DBUS_PROP_IFACE)
+            active = props.Get(LE_ADVERTISING_MANAGER_IFACE, 'ActiveInstances')
+            return int(active) > 0
+        except dbus.exceptions.DBusException as e:
+            self.logger.debug(f'Watchdog: D-Bus check failed ({e}), trying hcitool fallback')
+            # Fallback for older BlueZ without ActiveInstances property
+            try:
+                result = subprocess.run(
+                    ['hciconfig', 'hci0'],
+                    capture_output=True, text=True, timeout=5)
+                return 'LEADV' in result.stdout
+            except (subprocess.TimeoutExpired, OSError):
+                return False
+        except Exception as e:
             self.logger.error(f'Watchdog: failed to check advertising state: {e}')
             return False
 
