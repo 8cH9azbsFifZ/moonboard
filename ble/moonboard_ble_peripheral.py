@@ -25,10 +25,8 @@ import os
 import json
 import logging
 import queue
-import subprocess
 import threading
 import signal
-import time
 
 import dbus
 import dbus.service
@@ -293,20 +291,11 @@ class MoonboardBLEPeripheral:
         self.loop = None
         self._mqtt_client = None
         self._use_hcitool_fallback = False
-        self._bus = None
-        self._adapter_obj = None
-        self._watchdog_interval = 30  # seconds
-        self._watchdog_backoff = 30   # current interval (grows on failure)
-        self._watchdog_failures = 0
-        self._last_connect_time = None
-        self._last_disconnect_time = None
-        self._connection_timeout_warned = False
 
     def start(self):
         """Initialize and run the BLE peripheral."""
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-        self._bus = dbus.SystemBus()
-        bus = self._bus
+        bus = dbus.SystemBus()
 
         # Setup MQTT
         if HAS_MQTT:
@@ -316,8 +305,7 @@ class MoonboardBLEPeripheral:
         self.logger.info('Registering GATT application...')
         self.app = GATTApplication(bus, self.rx_queue, self.logger)
 
-        self._adapter_obj = bus.get_object(BLUEZ_SERVICE_NAME, self.adapter)
-        adapter_obj = self._adapter_obj
+        adapter_obj = bus.get_object(BLUEZ_SERVICE_NAME, self.adapter)
 
         # Register GATT
         gatt_manager = dbus.Interface(adapter_obj, GATT_MANAGER_IFACE)
@@ -351,10 +339,6 @@ class MoonboardBLEPeripheral:
             signal_name='PropertiesChanged',
             dbus_interface=DBUS_PROP_IFACE,
             path_keyword='path')
-
-        # Start advertising watchdog
-        GLib.timeout_add_seconds(self._watchdog_interval, self._watchdog_tick)
-        self.logger.info(f'Advertising watchdog started (interval={self._watchdog_interval}s)')
 
         # Run main loop
         self.loop = GLib.MainLoop()
@@ -419,8 +403,6 @@ class MoonboardBLEPeripheral:
         if device not in self.unstuffers:
             self.unstuffers[device] = UnstuffSequence(self.logger)
             self.logger.info(f'New device connected: {device}')
-            self._last_connect_time = time.time()
-            self._connection_timeout_warned = False
 
         unstuffer = self.unstuffers[device]
 
@@ -434,174 +416,6 @@ class MoonboardBLEPeripheral:
             self.logger.info(f'Problem decoded: {problem}')
             self._publish_problem(problem)
             unstuffer.flags = []
-
-    def _check_advertising_active(self):
-        """Check if LE advertising is active — cross-validates D-Bus and HCI state.
-        
-        Returns True only if BOTH BlueZ D-Bus AND the HCI controller agree
-        that advertising is active. Logs detailed state for diagnostics.
-        """
-        dbus_active = False
-        hci_flags = ''
-
-        # Check 1: D-Bus ActiveInstances
-        try:
-            if self._bus:
-                adapter_obj = self._bus.get_object(BLUEZ_SERVICE_NAME, self.adapter)
-                props = dbus.Interface(adapter_obj, DBUS_PROP_IFACE)
-                active = props.Get(LE_ADVERTISING_MANAGER_IFACE, 'ActiveInstances')
-                dbus_active = int(active) > 0
-        except dbus.exceptions.DBusException as e:
-            self.logger.debug(f'Watchdog: D-Bus ActiveInstances check failed: {e}')
-        except Exception as e:
-            self.logger.error(f'Watchdog: D-Bus check error: {e}')
-
-        # Check 2: HCI controller flags
-        try:
-            result = subprocess.run(
-                ['hciconfig', 'hci0'],
-                capture_output=True, text=True, timeout=5)
-            hci_flags = result.stdout.strip()
-            # Extract the flags line (e.g. "UP RUNNING PSCAN LEADV")
-            for line in hci_flags.split('\n'):
-                if 'UP' in line and 'RUNNING' in line:
-                    hci_flags = line.strip()
-                    break
-        except (subprocess.TimeoutExpired, OSError) as e:
-            self.logger.error(f'Watchdog: hciconfig check failed: {e}')
-            hci_flags = 'ERROR'
-
-        # Check 3: Active connections (advertising pauses during connection on Pi Zero)
-        has_connection = False
-        try:
-            result = subprocess.run(
-                ['hcitool', 'con'],
-                capture_output=True, text=True, timeout=5)
-            has_connection = 'ACL' in result.stdout or 'LE' in result.stdout
-        except (subprocess.TimeoutExpired, OSError):
-            pass
-
-        self.logger.debug(
-            f'Watchdog: dbus_active={dbus_active}, hci=[{hci_flags}], '
-            f'connected={has_connection}')
-
-        # If a device is connected, advertising naturally pauses (Pi Zero = single-connection)
-        if has_connection:
-            return True
-
-        # Trust D-Bus as primary signal — BlueZ manages advertising via its own kernel interface
-        # The LEADV flag may not appear when using LEAdvertisingManager1
-        if dbus_active:
-            return True
-
-        return False
-
-    def _recover_advertising(self):
-        """Recover from advertising failure: reset hci0 and re-register GATT + advertisement."""
-        self.logger.warning('Watchdog: advertising not active, attempting recovery...')
-        self._recovering = True
-        try:
-            # Unregister existing GATT/advertisement first (ignore errors if already gone)
-            if self._adapter_obj:
-                try:
-                    gatt_mgr = dbus.Interface(self._adapter_obj, GATT_MANAGER_IFACE)
-                    gatt_mgr.UnregisterApplication(self.app.get_path())
-                except dbus.exceptions.DBusException:
-                    pass
-                try:
-                    ad_mgr = dbus.Interface(self._adapter_obj, LE_ADVERTISING_MANAGER_IFACE)
-                    ad_mgr.UnregisterAdvertisement(self.adv.get_path())
-                except dbus.exceptions.DBusException:
-                    pass
-
-            # Reset hci0
-            subprocess.run(['hciconfig', 'hci0', 'reset'],
-                          capture_output=True, timeout=5)
-            time.sleep(2)
-
-            # Bring hci0 back up
-            subprocess.run(['hciconfig', 'hci0', 'up'],
-                          capture_output=True, timeout=5)
-            time.sleep(1)
-
-            # Re-acquire adapter object (reset may invalidate it)
-            if self._bus:
-                adapter_obj = self._bus.get_object(BLUEZ_SERVICE_NAME, self.adapter)
-                self._adapter_obj = adapter_obj
-
-                gatt_manager = dbus.Interface(adapter_obj, GATT_MANAGER_IFACE)
-                gatt_manager.RegisterApplication(
-                    self.app.get_path(), {},
-                    reply_handler=self._register_app_cb,
-                    error_handler=self._register_app_recovery_error_cb)
-
-                # Re-register advertisement
-                try:
-                    ad_manager = dbus.Interface(adapter_obj, LE_ADVERTISING_MANAGER_IFACE)
-                    ad_manager.RegisterAdvertisement(
-                        self.adv.get_path(), {},
-                        reply_handler=self._register_ad_cb,
-                        error_handler=self._register_ad_error_cb)
-                except dbus.exceptions.DBusException:
-                    self._use_hcitool_fallback = True
-                    self._setup_hcitool_advertising()
-
-            # Verify recovery
-            time.sleep(2)
-            if self._check_advertising_active():
-                self.logger.info('Watchdog: advertising recovered successfully')
-                return True
-            else:
-                self.logger.error('Watchdog: recovery attempt failed, advertising still not active')
-                return False
-
-        except Exception as e:
-            self.logger.error(f'Watchdog: recovery failed with exception: {e}')
-            return False
-        finally:
-            self._recovering = False
-
-    def _watchdog_tick(self):
-        """GLib timeout callback: check advertising and recover if needed."""
-        is_active = self._check_advertising_active()
-
-        if is_active:
-            # Reset backoff on success
-            if self._watchdog_failures > 0:
-                self.logger.info('Watchdog: advertising confirmed active, resetting backoff')
-            self._watchdog_failures = 0
-            self._watchdog_backoff = self._watchdog_interval
-
-            # Proactive re-registration every 2 minutes to keep BCM43438 fresh
-            # The chip's advertising state degrades over time without connections
-            if not hasattr(self, '_ticks_since_readvertise'):
-                self._ticks_since_readvertise = 0
-            self._ticks_since_readvertise += 1
-            if self._ticks_since_readvertise >= 4:  # 4 * 30s = 2 min
-                self._ticks_since_readvertise = 0
-                self.logger.debug('Watchdog: proactive advertisement refresh')
-                self._force_readvertise_after_disconnect()
-
-            return True  # keep timer running
-
-        # Advertising not active — attempt recovery
-        self._watchdog_failures += 1
-        success = self._recover_advertising()
-
-        if success:
-            self._watchdog_failures = 0
-            self._watchdog_backoff = self._watchdog_interval
-        else:
-            # Exponential backoff: 30 → 60 → 120 → 300 (cap)
-            self._watchdog_backoff = min(self._watchdog_backoff * 2, 300)
-            self.logger.critical(
-                f'Watchdog: recovery failed ({self._watchdog_failures} consecutive). '
-                f'Next attempt in {self._watchdog_backoff}s')
-            # Re-schedule with longer interval
-            GLib.timeout_add_seconds(self._watchdog_backoff, self._watchdog_tick)
-            return False  # cancel current timer, new one scheduled with backoff
-
-        return True  # keep timer running at normal interval
 
     def _setup_hcitool_advertising(self):
         """Fallback: setup BLE advertising via raw hcitool HCI commands.
@@ -639,84 +453,18 @@ class MoonboardBLEPeripheral:
             return
         if 'Connected' in changed and not changed['Connected']:
             self.logger.info(f'Device disconnected: {path}')
-            self._last_disconnect_time = time.time()
             # Cleanup stale protocol state
             self.unstuffers.pop(path, None)
             # Re-enable advertising in fallback mode
             self._restart_advertising_on_disconnect()
-            # Force re-advertisement immediately (BCM43438 needs active kick)
-            GLib.timeout_add_seconds(2, self._force_readvertise_after_disconnect)
-
-    def _post_disconnect_check(self):
-        """Check advertising shortly after disconnect and recover if needed."""
-        if not self._check_advertising_active():
-            self.logger.warning('Post-disconnect: advertising not active, recovering...')
-            self._recover_advertising()
-        return False  # one-shot timer
-
-    def _force_readvertise_after_disconnect(self):
-        """Force re-registration of advertisement after every disconnect.
-        
-        The BCM43438 on Pi Zero often fails to resume advertising after a
-        disconnect even though BlueZ reports ActiveInstances=1. The only
-        reliable fix is to unregister and re-register the advertisement,
-        which forces BlueZ to re-issue the HCI advertising commands.
-        """
-        self.logger.info('Post-disconnect: forcing advertisement re-registration')
-        try:
-            if self._adapter_obj:
-                ad_mgr = dbus.Interface(self._adapter_obj, LE_ADVERTISING_MANAGER_IFACE)
-                # Unregister
-                try:
-                    ad_mgr.UnregisterAdvertisement(self.adv.get_path())
-                except dbus.exceptions.DBusException:
-                    pass
-                time.sleep(0.5)
-                # Re-register
-                ad_mgr.RegisterAdvertisement(
-                    self.adv.get_path(), {},
-                    reply_handler=self._register_ad_cb,
-                    error_handler=self._register_ad_error_cb)
-        except Exception as e:
-            self.logger.error(f'Post-disconnect re-advertise failed: {e}')
-        return False  # one-shot timer
-
-    def _force_readvertise(self):
-        """Force re-registration of advertisement without full hci0 reset.
-        
-        Used when D-Bus says advertising is active but no phone can connect
-        (stale advertisement state).
-        """
-        self.logger.info('Force re-advertising: unregister + re-register advertisement')
-        try:
-            if self._adapter_obj:
-                ad_mgr = dbus.Interface(self._adapter_obj, LE_ADVERTISING_MANAGER_IFACE)
-                try:
-                    ad_mgr.UnregisterAdvertisement(self.adv.get_path())
-                except dbus.exceptions.DBusException:
-                    pass
-                time.sleep(1)
-                ad_mgr.RegisterAdvertisement(
-                    self.adv.get_path(), {},
-                    reply_handler=self._register_ad_cb,
-                    error_handler=self._register_ad_error_cb)
-        except Exception as e:
-            self.logger.error(f'Force re-advertise failed: {e}, trying full recovery')
-            self._recover_advertising()
 
     def _register_app_cb(self):
         self.logger.info('GATT application registered')
 
     def _register_app_error_cb(self, error):
         self.logger.error(f'Failed to register GATT application: {error}')
-        if getattr(self, '_recovering', False):
-            return  # don't quit during recovery
         if self.loop:
             self.loop.quit()
-
-    def _register_app_recovery_error_cb(self, error):
-        """Error callback for GATT re-registration during recovery (never quits the loop)."""
-        self.logger.warning(f'Watchdog: GATT re-registration failed: {error}')
 
     def _register_ad_cb(self):
         self.logger.info('Advertisement registered')
