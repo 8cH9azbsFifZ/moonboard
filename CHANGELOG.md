@@ -1,3 +1,5 @@
+- v1.1 Fix BLE adapter name: set adapter alias to "Moonboard A" via ExecStartPre so the iOS Moonboard app can discover the device (was broadcasting hostname e.g. "raspi-moonboard")
+- v1.0 BLE rewrite (proper D-Bus GATT server, NUS protocol, write-without-response, multi-phone safe state)
 - v0.32 Removed DBUS backend for LED, new MQTT backend and corresponding services
 - v0.31 Animations and prototyped mqtt linkage to hangboard
 - v0.30 simplified installation procedure, fix service logging and installtion collisions

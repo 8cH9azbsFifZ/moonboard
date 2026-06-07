@@ -13,6 +13,10 @@ PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
 WorkingDirectory=/home/pi/moonboard/ble
+# Ensure BLE adapter advertises as "Moonboard A" (matches what the iOS app scans for).
+# Without this, the chip broadcasts the system hostname (e.g. "raspi-moonboard")
+# and the Moonboard app fails to discover the device.
+ExecStartPre=/usr/bin/btmgmt name "Moonboard A" "MBA"
 ExecStart=/usr/bin/python3 /home/pi/moonboard/ble/moonboard_ble_peripheral.py --mqtt-host localhost
 Restart=on-failure
 RestartSec=5
