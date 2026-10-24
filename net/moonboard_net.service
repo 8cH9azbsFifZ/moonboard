@@ -1,0 +1,14 @@
+[Unit]
+Description=Moonboard WLAN access (HTTPS -> MQTT)
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/moonboard/net/
+ExecStart=/usr/bin/python3 /home/pi/moonboard/net/moonboard_net_service.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
