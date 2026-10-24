@@ -10,6 +10,7 @@ import logging
 import time
 import paho.mqtt.client as paho
 import math
+from frame import FRAME_TOPIC, InvalidFrame, parse_frame
 
 # external power LED and power button
 LED_GPIO = 26
@@ -34,6 +35,7 @@ class Database():
         if rc == 0:
             logging.info("MQTT connected, subscribing to moonboard/ble/problem")
             client.subscribe("moonboard/ble/problem", qos=1)
+            client.subscribe(FRAME_TOPIC, qos=0)
         else:
             logging.error(f"MQTT connection failed with rc={rc}")
 
@@ -52,6 +54,10 @@ class Database():
             msg = json.loads(payload)
         except json.JSONDecodeError:
             logging.error(f"Invalid JSON in MQTT message: {payload[:100]}")
+            return
+
+        if message.topic == FRAME_TOPIC:
+            self._show_frame(msg)
             return
 
         # Validate required keys
@@ -94,6 +100,19 @@ class Database():
         self._MOONBOARD.layout.push_to_driver()
 
 
+
+    def _show_frame(self, msg):
+        # Display mode: arbitrary colours, one push per frame; not logged per frame (animations).
+        try:
+            pixels = parse_frame(msg)
+        except InvalidFrame as e:
+            logging.error(f"Invalid frame: {e}")
+            return
+        self._MOONBOARD.layout.all_off()
+        for pos, rgb in pixels.items():
+            if pos in self._MOONBOARD.MAPPING:
+                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[pos], rgb)
+        self._MOONBOARD.layout.push_to_driver()
 
     def _record_data(self, hostname="localhost", port=1883):
         logging.debug("Start recording data from mqtt")
