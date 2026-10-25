@@ -35,3 +35,14 @@ The service MUST use a certificate the household devices already trust and SHALL
 #### Scenario: Foreign origin
 - **WHEN** a request carries `Origin: https://example.com`
 - **THEN** the response has no `Access-Control-Allow-Origin` header
+
+### Requirement: Show-Modus setzen
+The Pi SHALL accept `POST /show` with `{"mode": "<name>"}` (lowercase name of a show mode) and forward it to the show service; `GET /show` and `/status` SHALL report the current show mode.
+
+#### Scenario: Manege app starts a light
+- **WHEN** `{"mode": "zelt"}` is posted from the Manege app
+- **THEN** the response is 200 and the wall plays the circus tent
+
+#### Scenario: Invalid mode
+- **WHEN** a mode contains other characters than lowercase letters and hyphens
+- **THEN** the response is 400 and nothing is forwarded

@@ -18,8 +18,11 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 TOPIC = "moonboard/ble/problem"
+SHOW_SET = "kletterwand/show/modus/set"      # Show-Dienst (Repo KletterDach-Show)
+SHOW_STATE = "kletterwand/show/modus/state"
+SHOW_MODE = re.compile(r"^[a-z][a-z-]{0,29}$")
 REQUIRED = ("START", "MOVES", "TOP")
 OPTIONAL = ("LEFT", "FOOT", "MATCH")
 POSITION = re.compile(r"^[A-K](?:[1-9]|1[0-8])$")
@@ -28,6 +31,7 @@ DEFAULT_ORIGINS = (
     "https://10.101.2.71:8443",
     "https://100.116.179.60:8443",
     "kletterdach://app",
+    "manege://app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 )
@@ -60,6 +64,13 @@ def validate_problem(msg):
     return clean
 
 
+def validate_show(msg):
+    """{"mode": "zelt"} → "zelt" oder InvalidProblem."""
+    if not isinstance(msg, dict) or not isinstance(msg.get("mode"), str) or not SHOW_MODE.match(msg["mode"]):
+        raise InvalidProblem("mode must be a lowercase show name")
+    return msg["mode"]
+
+
 def allowed_origin(origin, allowed):
     return origin if origin and origin in allowed else None
 
@@ -72,10 +83,12 @@ class Wall:
 
         self._lock = threading.Lock()
         self.last = None
+        self.show = None
         self.connected = False
         self._client = paho.Client(client_id="moonboard-net")
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
+        self._client.on_message = self._on_message
         self._client.reconnect_delay_set(min_delay=1, max_delay=30)
         self._client.connect_async(host, port, keepalive=30)
         self._client.loop_start()
@@ -83,6 +96,14 @@ class Wall:
     def _on_connect(self, client, userdata, flags, rc):
         self.connected = rc == 0
         logging.info("MQTT connected rc=%s", rc)
+        client.subscribe(SHOW_STATE, qos=1)
+
+    def _on_message(self, client, userdata, msg):
+        if msg.topic == SHOW_STATE:
+            self.show = msg.payload.decode("utf-8", "replace")
+
+    def set_show(self, mode):
+        self._client.publish(SHOW_SET, mode, qos=1).wait_for_publish()
 
     def _on_disconnect(self, client, userdata, rc):
         self.connected = False
@@ -97,7 +118,7 @@ class Wall:
     def status(self):
         with self._lock:
             last = self.last
-        return {"ok": True, "version": VERSION, "mqtt": self.connected, "last": last}
+        return {"ok": True, "version": VERSION, "mqtt": self.connected, "last": last, "show": self.show}
 
 
 def make_handler(wall, origins):
@@ -132,10 +153,27 @@ def make_handler(wall, origins):
         def do_GET(self):
             if self.path == "/status":
                 self._send(200, wall.status())
+            elif self.path == "/show":
+                self._send(200, {"ok": True, "show": wall.show})
             else:
                 self._send(404, {"ok": False, "error": "not found"})
 
         def do_POST(self):
+            if self.path == "/show":
+                length = int(self.headers.get("Content-Length") or 0)
+                try:
+                    if length <= 0 or length > 256:
+                        raise InvalidProblem("body missing or too large")
+                    mode = validate_show(json.loads(self.rfile.read(length).decode("utf-8")))
+                except (ValueError, UnicodeDecodeError) as exc:
+                    self._send(400, {"ok": False, "error": str(exc)})
+                    return
+                if not wall.connected:
+                    self._send(503, {"ok": False, "error": "LED service bus (MQTT) not connected"})
+                    return
+                wall.set_show(mode)
+                self._send(200, {"ok": True, "mode": mode})
+                return
             if self.path not in ("/problem", "/clear"):
                 self._send(404, {"ok": False, "error": "not found"})
                 return

@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'net'))
 from moonboard_net_service import (DEFAULT_ORIGINS, InvalidProblem, allowed_origin,
-                                   validate_problem)
+                                   validate_problem, validate_show)
 
 
 class TestValidateProblem(unittest.TestCase):
@@ -44,7 +44,22 @@ class TestValidateProblem(unittest.TestCase):
             validate_problem({"START": "A1", "MOVES": [], "TOP": []})
 
 
+class TestShow(unittest.TestCase):
+
+    def test_valid_mode(self):
+        self.assertEqual(validate_show({"mode": "feuerreifen"}), "feuerreifen")
+
+    def test_invalid_mode(self):
+        for bad in ({"mode": "Zelt; rm"}, {"mode": ""}, {"mode": 3}, {}, []):
+            with self.assertRaises(InvalidProblem):
+                validate_show(bad)
+
+
 class TestCors(unittest.TestCase):
+
+    def test_manege_app_origin(self):
+        self.assertEqual(allowed_origin("manege://app", DEFAULT_ORIGINS), "manege://app")
+
 
     def test_app_origin(self):
         self.assertEqual(allowed_origin("https://10.101.2.71:8443", DEFAULT_ORIGINS),
