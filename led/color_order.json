@@ -1,0 +1,7 @@
+{
+  "_comment": "Farbreihenfolge je LED-Bereich. Gemessen 2026-10-25: Spalten F-K (ab LED 270) haben Rot und Grün vertauscht.",
+  "default": "RGB",
+  "ranges": [
+    {"from": 270, "to": 599, "order": "GRB"}
+  ]
+}

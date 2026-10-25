@@ -10,7 +10,7 @@ import logging
 import time
 import paho.mqtt.client as paho
 import math
-from frame import FRAME_TOPIC, InvalidFrame, parse_frame
+from frame import FRAME_TOPIC, InvalidFrame, apply_color_order, load_color_order, parse_frame
 
 # external power LED and power button
 LED_GPIO = 26
@@ -24,6 +24,7 @@ logging.basicConfig(level=logging.DEBUG,
 class Database():
     def __init__(self, driver_type="", led_layout=""):
         self._MOONBOARD = MoonBoard(driver_type, led_layout)
+        self._color_order = load_color_order(os.path.join(os.path.dirname(os.path.abspath(__file__)), "color_order.json"))
 
         # Init timers
         self._time_current = time.time()
@@ -80,26 +81,30 @@ class Database():
         self._MOONBOARD.layout.all_off()
         for s in msg["START"]:
             if s in self._MOONBOARD.MAPPING:
-                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[s], GREEN)
+                self._set(self._MOONBOARD.MAPPING[s], GREEN)
         for m in msg.get("MOVES", []):
             if m in self._MOONBOARD.MAPPING:
-                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[m], BLUE)        
+                self._set(self._MOONBOARD.MAPPING[m], BLUE)        
         for t in msg.get("LEFT", []):
             if t in self._MOONBOARD.MAPPING:
-                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], VIOLET)
+                self._set(self._MOONBOARD.MAPPING[t], VIOLET)
         for t in msg.get("FOOT", []):
             if t in self._MOONBOARD.MAPPING:
-                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], CYAN)
+                self._set(self._MOONBOARD.MAPPING[t], CYAN)
         for t in msg.get("MATCH", []):
             if t in self._MOONBOARD.MAPPING:
-                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], PINK)
+                self._set(self._MOONBOARD.MAPPING[t], PINK)
         for t in msg["TOP"]:
             if t in self._MOONBOARD.MAPPING:
-                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[t], RED)
+                self._set(self._MOONBOARD.MAPPING[t], RED)
         
         self._MOONBOARD.layout.push_to_driver()
 
 
+
+    def _set(self, index, rgb):
+        # Streifen mit vertauschten Kanälen (color_order.json) zeigen so dieselbe Farbe wie die App.
+        self._MOONBOARD.layout.set(index, apply_color_order(index, rgb, self._color_order))
 
     def _show_frame(self, msg):
         # Display mode: arbitrary colours, one push per frame; not logged per frame (animations).
@@ -111,7 +116,7 @@ class Database():
         self._MOONBOARD.layout.all_off()
         for pos, rgb in pixels.items():
             if pos in self._MOONBOARD.MAPPING:
-                self._MOONBOARD.layout.set(self._MOONBOARD.MAPPING[pos], rgb)
+                self._set(self._MOONBOARD.MAPPING[pos], rgb)
         self._MOONBOARD.layout.push_to_driver()
 
     def _record_data(self, hostname="localhost", port=1883):

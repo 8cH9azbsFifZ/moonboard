@@ -5,7 +5,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'led'))
-from frame import InvalidFrame, parse_frame
+from frame import InvalidFrame, apply_color_order, load_color_order, parse_frame
 
 
 class TestParseFrame(unittest.TestCase):
@@ -36,6 +36,27 @@ class TestParseFrame(unittest.TestCase):
     def test_missing_pixels(self):
         with self.assertRaises(InvalidFrame):
             parse_frame({"START": []})
+
+
+class TestColorOrder(unittest.TestCase):
+
+    def setUp(self):
+        self.order = load_color_order(os.path.join(os.path.dirname(__file__), '..', 'led', 'color_order.json'))
+
+    def test_column_e_unchanged(self):
+        self.assertEqual(apply_color_order(268, (0, 255, 0), self.order), (0, 255, 0))
+
+    def test_column_f_red_green_swapped(self):
+        # F18 = LED 271: Grün muss als (255, 0, 0) gesendet werden, damit es grün leuchtet
+        self.assertEqual(apply_color_order(271, (0, 255, 0), self.order), (255, 0, 0))
+        self.assertEqual(apply_color_order(593, (255, 0, 0), self.order), (0, 255, 0))
+
+    def test_blue_unaffected(self):
+        self.assertEqual(apply_color_order(400, (0, 0, 255), self.order), (0, 0, 255))
+
+    def test_missing_file_means_rgb(self):
+        order = load_color_order('/nonexistent.json')
+        self.assertEqual(apply_color_order(400, (1, 2, 3), order), (1, 2, 3))
 
 
 if __name__ == '__main__':

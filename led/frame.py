@@ -30,3 +30,27 @@ def parse_frame(msg):
             raise InvalidFrame("invalid colour for " + pos)
         out[pos] = tuple(rgb)
     return out
+
+
+def load_color_order(path):
+    """Farbreihenfolge je LED-Bereich laden; ohne Datei gilt überall RGB."""
+    import json
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {"default": "RGB", "ranges": []}
+    return {"default": data.get("default", "RGB"), "ranges": data.get("ranges", [])}
+
+
+def apply_color_order(index, rgb, order):
+    """Farbe so umstellen, dass ein Streifen mit anderer Kanalreihenfolge die gewünschte Farbe zeigt."""
+    kind = order["default"]
+    for r in order["ranges"]:
+        if r["from"] <= index <= r["to"]:
+            kind = r["order"]
+            break
+    red, green, blue = rgb
+    if kind == "GRB":
+        return (green, red, blue)
+    return (red, green, blue)
