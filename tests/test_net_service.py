@@ -1,12 +1,19 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the WLAN access service (openspec/changes/add-wlan-access)."""
+import json
 import os
+import shutil
+import socket
+import ssl
+import subprocess
 import sys
+import tempfile
+import threading
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'net'))
-from moonboard_net_service import (DEFAULT_ORIGINS, InvalidProblem, allowed_origin,
-                                   validate_problem, validate_show)
+from moonboard_net_service import (DEFAULT_ORIGINS, InvalidProblem, TLSServer, allowed_origin,
+                                   make_handler, validate_problem, validate_show)
 
 
 class TestValidateProblem(unittest.TestCase):
@@ -88,6 +95,56 @@ class TestWallShowState(unittest.TestCase):
         wall._on_message(None, None, Msg())
         self.assertTrue(callable(wall.show))
         self.assertEqual(wall.show_mode, "zirkus")
+
+
+class StubWall:
+    connected = True
+    show_mode = None
+
+    def status(self):
+        return {"ok": True}
+
+
+@unittest.skipUnless(shutil.which("openssl"), "openssl needed for a test certificate")
+class TestTlsServer(unittest.TestCase):
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        cert, key = os.path.join(self.dir, "c.pem"), os.path.join(self.dir, "k.pem")
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                        "-subj", "/CN=localhost", "-keyout", key, "-out", cert],
+                       check=True, capture_output=True)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(cert, key)
+        self.server = TLSServer(("127.0.0.1", 0), make_handler(StubWall(), DEFAULT_ORIGINS), context)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        shutil.rmtree(self.dir)
+
+    def status(self):
+        client = ssl.create_default_context()
+        client.check_hostname = False
+        client.verify_mode = ssl.CERT_NONE
+        with socket.create_connection(self.server.server_address, timeout=3) as raw:
+            with client.wrap_socket(raw) as tls:
+                tls.sendall(b"GET /status HTTP/1.0\r\n\r\n")
+                data = b""
+                while True:
+                    chunk = tls.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+        return json.loads(data.split(b"\r\n\r\n", 1)[1])
+
+    def test_idle_connection_does_not_block_others(self):
+        idle = socket.create_connection(self.server.server_address)
+        try:
+            self.assertEqual(self.status(), {"ok": True})
+        finally:
+            idle.close()
 
 
 if __name__ == '__main__':

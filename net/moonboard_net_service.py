@@ -201,6 +201,33 @@ def make_handler(wall, origins):
     return Handler
 
 
+class TLSServer(ThreadingHTTPServer):
+    """TLS handshake per connection in its worker thread, with a timeout.
+
+    Wrapping the listening socket would run the handshake inside accept() on the main
+    thread: one client that connects but never finishes it (phone asleep, preconnect)
+    blocks every other request.
+    """
+    daemon_threads = True
+    timeout_s = 10
+
+    def __init__(self, address, handler, context):
+        super().__init__(address, handler)
+        self.context = context
+
+    def finish_request(self, request, client_address):
+        request.settimeout(self.timeout_s)
+        try:
+            tls = self.context.wrap_socket(request, server_side=True)
+        except (ssl.SSLError, OSError) as exc:
+            logging.debug("TLS handshake with %s failed: %s", client_address[0], exc)
+            return
+        try:
+            super().finish_request(tls, client_address)
+        finally:
+            tls.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bind", default="0.0.0.0")
@@ -215,10 +242,9 @@ def main():
     env = os.environ.get("MOONBOARD_NET_ORIGINS")
     origins = tuple(o.strip() for o in env.split(",") if o.strip()) if env else DEFAULT_ORIGINS
     wall = Wall(args.mqtt_host)
-    httpd = ThreadingHTTPServer((args.bind, args.port), make_handler(wall, origins))
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(args.cert, args.key)
-    httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+    httpd = TLSServer((args.bind, args.port), make_handler(wall, origins), context)
     logging.info("listening on https://%s:%s", args.bind, args.port)
     httpd.serve_forever()
 
