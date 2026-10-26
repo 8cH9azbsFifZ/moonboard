@@ -83,7 +83,7 @@ class Wall:
 
         self._lock = threading.Lock()
         self.last = None
-        self.show = None
+        self.show_mode = None
         self.connected = False
         self._client = paho.Client(client_id="moonboard-net")
         self._client.on_connect = self._on_connect
@@ -100,7 +100,7 @@ class Wall:
 
     def _on_message(self, client, userdata, msg):
         if msg.topic == SHOW_STATE:
-            self.show = msg.payload.decode("utf-8", "replace")
+            self.show_mode = msg.payload.decode("utf-8", "replace")
 
     def set_show(self, mode):
         self._client.publish(SHOW_SET, mode, qos=1).wait_for_publish()
@@ -118,7 +118,7 @@ class Wall:
     def status(self):
         with self._lock:
             last = self.last
-        return {"ok": True, "version": VERSION, "mqtt": self.connected, "last": last, "show": self.show}
+        return {"ok": True, "version": VERSION, "mqtt": self.connected, "last": last, "show": self.show_mode}
 
 
 def make_handler(wall, origins):
@@ -154,7 +154,7 @@ def make_handler(wall, origins):
             if self.path == "/status":
                 self._send(200, wall.status())
             elif self.path == "/show":
-                self._send(200, {"ok": True, "show": wall.show})
+                self._send(200, {"ok": True, "show": wall.show_mode})
             else:
                 self._send(404, {"ok": False, "error": "not found"})
 

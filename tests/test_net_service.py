@@ -72,5 +72,23 @@ class TestCors(unittest.TestCase):
         self.assertIsNone(allowed_origin(None, DEFAULT_ORIGINS))
 
 
+class TestWallShowState(unittest.TestCase):
+    """The show-mode state must not shadow Wall.show(), or no route reaches the wall."""
+
+    def test_show_stays_callable_after_state_message(self):
+        import moonboard_net_service as svc
+
+        class Msg:
+            topic = svc.SHOW_STATE
+            payload = b"zirkus"
+
+        wall = svc.Wall.__new__(svc.Wall)
+        wall.show_mode = None
+        self.assertTrue(callable(wall.show))
+        wall._on_message(None, None, Msg())
+        self.assertTrue(callable(wall.show))
+        self.assertEqual(wall.show_mode, "zirkus")
+
+
 if __name__ == '__main__':
     unittest.main()
