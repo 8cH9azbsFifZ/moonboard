@@ -43,13 +43,16 @@ class TestColorOrder(unittest.TestCase):
     def setUp(self):
         self.order = load_color_order(os.path.join(os.path.dirname(__file__), '..', 'led', 'color_order.json'))
 
-    def test_column_e_unchanged(self):
-        self.assertEqual(apply_color_order(268, (0, 255, 0), self.order), (0, 255, 0))
+    def test_all_strips_rgb(self):
+        # Geprüft 2026-10-27 an der Wand: linke und rechte Streifen zeigen rohe Werte gleich.
+        for index in (0, 268, 271, 412, 593):
+            self.assertEqual(apply_color_order(index, (0, 255, 0), self.order), (0, 255, 0))
+            self.assertEqual(apply_color_order(index, (255, 0, 0), self.order), (255, 0, 0))
 
-    def test_column_f_red_green_swapped(self):
-        # F18 = LED 271: Grün muss als (255, 0, 0) gesendet werden, damit es grün leuchtet
-        self.assertEqual(apply_color_order(271, (0, 255, 0), self.order), (255, 0, 0))
-        self.assertEqual(apply_color_order(593, (255, 0, 0), self.order), (0, 255, 0))
+    def test_grb_range_still_supported(self):
+        order = {"default": "RGB", "ranges": [{"from": 10, "to": 20, "order": "GRB"}]}
+        self.assertEqual(apply_color_order(15, (0, 255, 0), order), (255, 0, 0))
+        self.assertEqual(apply_color_order(25, (0, 255, 0), order), (0, 255, 0))
 
     def test_blue_unaffected(self):
         self.assertEqual(apply_color_order(400, (0, 0, 255), self.order), (0, 0, 255))

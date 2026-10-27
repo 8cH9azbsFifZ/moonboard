@@ -1,7 +1,5 @@
 {
-  "_comment": "Farbreihenfolge je LED-Bereich. Gemessen 2026-10-25: Spalten F-K (ab LED 270) haben Rot und Grün vertauscht.",
+  "_comment": "Farbreihenfolge je LED-Bereich. Geprüft 2026-10-27 mit rohen Farbwerten an Spalte C und H: alle Streifen sind RGB, keine Vertauschung. (Die Annahme vom 2026-10-25, F-K seien vertauscht, war falsch.)",
   "default": "RGB",
-  "ranges": [
-    {"from": 270, "to": 599, "order": "GRB"}
-  ]
+  "ranges": []
 }
